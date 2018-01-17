@@ -82,22 +82,22 @@ def eval(dataset_split, config_files, watch, from_global_step,
     # intermediate tensors.
     prediction_dict = model(train_image, train_objects)
 
-    if config.model.network.with_rcnn:
-        pred = prediction_dict['classification_prediction']
-        pred_objects = pred['objects']
-        pred_objects_classes = pred['labels']
-        pred_objects_scores = pred['probs']
-    else:
-        # Force the num_classes to 1
-        config.model.network.num_classes = 1
+    # if config.model.network.with_rcnn:
+    pred = prediction_dict['classification_prediction']
+    pred_objects = pred['objects']
+    pred_objects_classes = pred['labels']
+    pred_objects_scores = pred['probs']
+    # else:
+    #     # Force the num_classes to 1
+    #     config.model.network.num_classes = 1
 
-        pred = prediction_dict['rpn_prediction']
-        pred_objects = pred['proposals']
-        pred_objects_scores = pred['scores']
-        # When using only RPN all classes are 0.
-        pred_objects_classes = tf.zeros(
-            (tf.shape(pred_objects_scores)[0],), dtype=tf.int32
-        )
+    #     pred = prediction_dict['rpn_prediction']
+    #     pred_objects = pred['proposals']
+    #     pred_objects_scores = pred['scores']
+    #     # When using only RPN all classes are 0.
+    #     pred_objects_classes = tf.zeros(
+    #         (tf.shape(pred_objects_scores)[0],), dtype=tf.int32
+    #     )
 
     # Retrieve *all* the losses from the model and calculate their streaming
     # means, so we get the loss over the whole dataset.
@@ -358,7 +358,7 @@ def evaluate_once(config, writer, saver, ops, checkpoint,
                     if visualize_file:
                         image_summaries = image_vis_summaries(
                             batch_fetched['prediction_dict'],
-                            with_rcnn=config.model.network.with_rcnn,
+                            config=config.model,
                             extra_tag=filename,
                             image_visualization_mode=image_vis,
                             image=batch_fetched['train_image'],
