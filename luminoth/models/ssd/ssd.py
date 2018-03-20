@@ -50,6 +50,7 @@ class SSD(snt.AbstractModule):
 
         # Weight for the localization loss
         self._loc_loss_weight = config.model.loss.localization_loss_weight
+
         # TODO: why not use the default LOSSES collection?
         self._losses_collections = ['ssd_losses']
 
@@ -58,15 +59,15 @@ class SSD(snt.AbstractModule):
             config.model.base_network, parent_name=self.module_name
         )
 
-    def _build(self, image, gt_boxes=None, is_training=True):
+    def _build(self, images, gt_boxes=None, is_training=True):
         """
         Returns bounding boxes and classification probabilities.
 
         Args:
-            image: A tensor with the image.
-                Its shape should be `(height, width, 3)`.
-            gt_boxes: A tensor with all the ground truth boxes of that image.
-                Its shape should be `(num_gt_boxes, 5)`
+            images: A tensor with a batch of images. Its shape should
+                be `(batch_size, height, width, 3)`.
+            gt_boxes: A tensor with all the ground truth boxes the images.
+                Its shape should be `(batch_size, num_gt_boxes, 5)`
                 Where for each gt box we have (x1, y1, x2, y2, label),
                 in that order.
             is_training: A boolean to whether or not it is used for training.
@@ -83,13 +84,14 @@ class SSD(snt.AbstractModule):
             bbox_offsets: A tensor with the predicted bbox_offsets
             class_scores: A tensor with the predicted classes scores
         """
+        # We infer the incoming batch's size instead of getting it from config
+        # because it may vary in size, particularly the last incomplete batch
+        # of a job
+        self._batch_size = tf.shape(images)[0]
         if gt_boxes is not None:
             gt_boxes = tf.cast(gt_boxes, tf.float32)
 
-        self.image_shape.append(3)  # Add channels to shape
-        image.set_shape(self.image_shape)
-        image = tf.expand_dims(image, 0)  # TODO: batch size is hardcoded to 1
-        feature_maps = self.feature_extractor(image, is_training=is_training)
+        feature_maps = self.feature_extractor(images, is_training=is_training)
 
         # Build a MultiBox predictor on top of each feature layer and collect
         # the bounding box offsets and the category score logits they produce
@@ -103,7 +105,10 @@ class SSD(snt.AbstractModule):
                 feat_map, num_anchors * 4, [3, 3], activation_fn=None,
                 scope=feat_map_name + '/conv_loc', padding='SAME'
             )
-            bbox_offsets_flattened = tf.reshape(bbox_offsets_layer, [-1, 4])
+            # TODO check exactly how reshape works just in case
+            bbox_offsets_flattened = tf.reshape(
+                bbox_offsets_layer, [self._batch_size, -1, 4]
+            )
             bbox_offsets_list.append(bbox_offsets_flattened)
 
             # Predict class scores
@@ -112,11 +117,14 @@ class SSD(snt.AbstractModule):
                 activation_fn=None, scope=feat_map_name + '/conv_cls',
                 padding='SAME'
             )
-            class_scores_flattened = tf.reshape(class_scores_layer,
-                                                [-1, self._num_classes + 1])
+            # TODO check exactly how reshape works just in case
+            class_scores_flattened = tf.reshape(
+                class_scores_layer,
+                [self._batch_size, -1, self._num_classes + 1]
+            )
             class_scores_list.append(class_scores_flattened)
-        bbox_offsets = tf.concat(bbox_offsets_list, axis=0)
-        class_scores = tf.concat(class_scores_list, axis=0)
+        bbox_offsets = tf.concat(bbox_offsets_list, axis=1)
+        class_scores = tf.concat(class_scores_list, axis=1)
         class_probabilities = slim.softmax(class_scores)
 
         # Generate anchors (generated only once, therefore we use numpy)
@@ -134,18 +142,17 @@ class SSD(snt.AbstractModule):
             clipped_bboxes = clip_boxes(scaled_bboxes, self.image_shape)
             all_anchors_list.append(clipped_bboxes)
         all_anchors = np.concatenate(all_anchors_list, axis=0)
-        # They were using float64, is all this precision necesary?
+        # TODO: They were using float64, is all this precision necesary?
         all_anchors = tf.convert_to_tensor(all_anchors, dtype=tf.float64)
 
         prediction_dict = {}
         if gt_boxes is not None:
             # Generate targets
-            target_creator = SSDTarget(self._num_classes, all_anchors.shape[0],
-                                       self._config.model.target)
+            target_creator = SSDTarget(self._config.model.target)
             class_targets, bbox_offsets_targets = target_creator(
-                class_probabilities, all_anchors, gt_boxes,
-                tf.cast(tf.shape(image), tf.float32)
+                class_probabilities, all_anchors, gt_boxes
             )
+            r = tf.Session().run; from IPython import embed; embed(display_banner=False)
 
             # Filter the predictions and targets that we will ignore
             # during training due to hard negative mining.

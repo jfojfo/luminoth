@@ -259,6 +259,10 @@ def train(config_files, job_dir, override_params):
     # Get the user config and the model type from it.
     try:
         config = get_config(config_files, override_params=override_params)
+        tf.summary.text('config', tf.convert_to_tensor(
+            json.dumps(config, indent=4)
+        ))
+
     except KeyError:
         # Without mode type defined we can't use the default config settings.
         raise KeyError('model.type should be set on the custom config.')
